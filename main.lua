@@ -1,8 +1,8 @@
 -- Master Loader by [PAHAJI HUB] - Super Fast Delay Edition
 local urls = {
-    "https://raw.githubusercontent.com/hajirblxhub/hwjwksnkekejsbbsbs/refs/heads/main/utama.lua",  
+    "https://raw.githubusercontent.com/hajirblxhub/hwjwksnkekejsbbsbs/refs/heads/main/utama",  
     "https://raw.githubusercontent.com/hajirblxhub/hwjwksnkekejsbbsbs/refs/heads/main/speed.lua", 
-    "https://raw.githubusercontent.com/hajirblxhub/hwjwksnkekejsbbsbs/refs/heads/main/speedup2.lua"
+    "https://raw.githubusercontent.com/hajirblxhub/hwjwksnkekejsbbsbs/refs/heads/main/speedup2"
     -- tambah lagi kalau mau 3
 }
 
