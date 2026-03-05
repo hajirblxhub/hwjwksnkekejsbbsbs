@@ -1546,42 +1546,38 @@ end
 
 
 
+-- =============================================
+-- AUTO SELL FISH (VERSI DINAMIS + DISPLAY COUNT)
+-- Taruh di Tab3 (Main/Automation)
+-- =============================================
+
+Tab3:Divider()
+
 Tab3:Section({
-    Title = "Sell Controls",
+    Title = "Auto Sell Fish",
     Icon = "dollar-sign",
+    TextSize = 20
 })
 
--- Remote (udah lo define di atas)
+-- Remote (pastikan di awal script lo ada ini)
 Events.sell = GetServerRemote("RF/SellAllItems")
 
--- Config default
-Config.SellMode             = Config.SellMode or "Minute"  -- "Minute" atau "Count"
-Config.SellValue            = Config.SellValue or 5
-Config.AutoSell             = Config.AutoSell or false
-Config.SellOnlyNonFavorited = Config.SellOnlyNonFavorited ~= false  -- default true (non-fav only)
-Config.ForceSellAll         = Config.ForceSellAll or false
+-- Variabel
+_G.AutoSellState   = _G.AutoSellState or false
+_G.AutoSellMethod  = _G.AutoSellMethod or "Delay"
+_G.AutoSellValue   = _G.AutoSellValue or 50
+_G.AutoSellThread  = _G.AutoSellThread or nil
 
--- Fungsi jual semua
-local function sellAll()
-    pcall(function()
-        if Events.sell then
-            Events.sell:InvokeServer({})
-        else
-            warn("[Auto Sell] Events.sell nil! Cek GetServerRemote.")
-        end
-    end)
-end
-
--- Hitung ikan yang bisa dijual (respect favorit)
-local function getSellableFishCount()
+-- Fungsi hitung ikan (pakai inventory Replion/DataService)
+local function GetFishCount()
     local count = 0
     pcall(function()
-        local inv = PlayerData:GetExpect("Inventory")  -- atau DataService:GetExpect("Inventory")
-        if inv and inv.Fish then
-            for _, fish in pairs(inv.Fish) do
-                local favorited = fish.Favorited or fish.IsFavorited or false
-                if Config.ForceSellAll or not favorited then
-                    count = count + 1
+        local inv = DataService:GetExpect({ "Inventory", "Items" })
+        if inv then
+            for _, item in ipairs(inv) do
+                local info = ItemUtility:GetItemDataFromItemType("Items", item.Id)
+                if info and info.Data.Type == "Fish" then
+                    count = count + (item.Quantity or 1)
                 end
             end
         end
@@ -1589,168 +1585,132 @@ local function getSellableFishCount()
     return count
 end
 
--- Logic loop auto sell
-local function autoSellLogic()
-    while Config.AutoSell do
-        task.wait(1)
-        
-        local currentSellable = getSellableFishCount()
-        
-        if currentSellable <= 0 then
-            task.wait(5)
-            continue
-        end
-        
-        if Config.SellMode == "Minute" then
-            local waitTime = (Config.SellValue * 60) - 1
-            if waitTime > 0 then task.wait(waitTime) end
+-- Unified loop auto sell
+local function RunAutoSellLoop()
+    if _G.AutoSellThread then task.cancel(_G.AutoSellThread) end
+    
+    _G.AutoSellThread = task.spawn(function()
+        while _G.AutoSellState do
+            if not Events.sell then
+                WindUI:Notify({ Title = "Error", Content = "Remote SellAllItems nil!", Duration = 5 })
+                _G.AutoSellState = false
+                break
+            end
             
-            if Config.AutoSell and currentSellable > 0 then
-                local before = currentSellable
-                sellAll()
-                task.wait(3.5)
-                local sold = before - getSellableFishCount()
-                if sold > 0 then
+            if _G.AutoSellMethod == "Delay" then
+                pcall(function()
+                    Events.sell:InvokeServer({})
+                end)
+                task.wait(math.max(_G.AutoSellValue, 1))  -- minimal 1 detik
+                
+            elseif _G.AutoSellMethod == "Count" then
+                local currentCount = GetFishCount()
+                
+                if currentCount >= _G.AutoSellValue then
+                    pcall(function()
+                        Events.sell:InvokeServer({})
+                    end)
                     WindUI:Notify({
                         Title = "Auto Sell",
-                        Content = "💸 Terjual " .. sold .. " ikan (" .. (Config.ForceSellAll and "All" or "Non-Fav") .. ")",
-                        Duration = 5
+                        Content = "Menjual " .. currentCount .. " ikan!",
+                        Duration = 3
                     })
+                    task.wait(2)  -- cooldown setelah jual
                 end
+                task.wait(1)  -- cek tiap detik
             end
-        elseif Config.SellMode == "Count" then
-            if currentSellable >= Config.SellValue then
-                local before = currentSellable
-                sellAll()
-                task.wait(3.5)
-                local sold = before - getSellableFishCount()
-                if sold > 0 then
-                    WindUI:Notify({
-                        Title = "Auto Sell",
-                        Content = "💸 Tas penuh! Terjual " .. sold .. " ikan (" .. (Config.ForceSellAll and "All" or "Non-Fav") .. ")",
-                        Duration = 5
-                    })
-                end
-            end
-            task.wait(4)
         end
-    end
+    end)
 end
 
--- Fungsi update task
-local function updateAutoSellTask()
-    if Config.AutoSell then
-        if Tasks.autoSellTask then task.cancel(Tasks.autoSellTask) end
-        Tasks.autoSellTask = task.spawn(autoSellLogic)
-    else
-        if Tasks.autoSellTask then task.cancel(Tasks.autoSellTask) end
-        Tasks.autoSellTask = nil
-    end
-end
+-- Display jumlah ikan real-time
+local countDisplay = Tab3:Paragraph({
+    Title = "Current Fish Count: 0",
+    Content = "Update setiap detik"
+})
 
--- UI Controls
-Tab3:Toggle({
-    Title = "Auto Sell (Minute Mode)",
-    Description = "Jual otomatis setiap X menit",
-    Value = (Config.SellMode == "Minute" and Config.AutoSell),
-    Callback = function(Value)
-        if Value then
-            Config.SellMode = "Minute"
-            Config.AutoSell = true
-            updateAutoSellTask()
-            WindUI:Notify({Title = "Auto Sell", Content = "Minute Mode ON - setiap " .. Config.SellValue .. " menit", Duration = 4})
-        else
-            if Config.SellMode == "Minute" then Config.AutoSell = false end
-            updateAutoSellTask()
-            WindUI:Notify({Title = "Auto Sell", Content = "Dimatikan", Duration = 2})
+spawn(function()
+    while task.wait(1) do
+        if countDisplay then
+            local count = GetFishCount()
+            countDisplay:SetTitle("Current Fish Count: " .. tostring(count))
         end
-        SaveConfig(1)  -- kalau lo punya
+    end
+end)
+
+-- Dropdown Method
+local methodDropdown = Tab3:Dropdown({
+    Title = "Select Method",
+    Values = {"Delay", "Count"},
+    Value = _G.AutoSellMethod,
+    Multi = false,
+    AllowNone = false,
+    Callback = function(val)
+        _G.AutoSellMethod = val
+        
+        -- Update judul input dinamis
+        if inputElement then
+            if val == "Delay" then
+                inputElement:SetTitle("Sell Delay (Seconds)")
+                inputElement:SetPlaceholder("Contoh: 50")
+            else
+                inputElement:SetTitle("Sell at Item Count")
+                inputElement:SetPlaceholder("Contoh: 100")
+            end
+        end
+        
+        -- Restart loop kalau aktif
+        if _G.AutoSellState then
+            RunAutoSellLoop()
+        end
     end
 })
 
-Tab3:Toggle({
-    Title = "Auto Sell (Count Mode)",
-    Description = "Jual otomatis saat >= X ikan",
-    Value = (Config.SellMode == "Count" and Config.AutoSell),
-    Callback = function(Value)
-        if Value then
-            Config.SellMode = "Count"
-            Config.AutoSell = true
-            updateAutoSellTask()
-            WindUI:Notify({Title = "Auto Sell", Content = "Count Mode ON - saat >= " .. Config.SellValue .. " ikan", Duration = 4})
-        else
-            if Config.SellMode == "Count" then Config.AutoSell = false end
-            updateAutoSellTask()
-            WindUI:Notify({Title = "Auto Sell", Content = "Dimatikan", Duration = 2})
-        end
-        SaveConfig(1)
-    end
-})
-
-Tab3:Input({
-    Title = "Set Value (Menit / Jumlah Ikan)",
-    Description = "Contoh: 5 menit atau 200 ikan",
-    Placeholder = "Contoh: 5",
-    Value = tostring(Config.SellValue),
-    Callback = function(Text)
-        local num = tonumber(Text)
+-- Input Value (dinamis)
+local inputElement = Tab3:Input({
+    Title = "Sell Delay (Seconds)",  -- judul awal
+    Placeholder = "Contoh: 50",
+    Value = tostring(_G.AutoSellValue),
+    Callback = function(text)
+        local num = tonumber(text)
         if num and num > 0 then
-            Config.SellValue = num
-            SaveConfig(1)
-            WindUI:Notify({Title = "Updated", Content = "Value diubah ke " .. num .. " (" .. Config.SellMode .. " mode)", Duration = 3})
+            _G.AutoSellValue = num
+            WindUI:Notify({Title = "Updated", Content = "Value diubah ke " .. num .. " (" .. _G.AutoSellMethod .. ")", Duration = 3})
         else
             WindUI:Notify({Title = "Error", Content = "Masukkan angka positif!", Duration = 3})
         end
     end
 })
 
+-- Toggle Enable
 Tab3:Toggle({
-    Title = "Sell Only Non-Favorited",
-    Description = "Jual hanya yang bukan favorit",
-    Value = Config.SellOnlyNonFavorited,
-    Callback = function(Value)
-        Config.SellOnlyNonFavorited = Value
-        SaveConfig(1)
-    end
-})
-
-Tab3:Toggle({
-    Title = "Force Sell All (Ignore Favorit)",
-    Description = "Jual SEMUA termasuk favorit",
-    Value = Config.ForceSellAll,
-    Callback = function(Value)
-        Config.ForceSellAll = Value
-        WindUI:Notify({
-            Title = "Warning",
-            Content = Value and "Force All ON - favorit bisa terjual!" or "Force All OFF",
-            Duration = 5
-        })
-        SaveConfig(1)
-    end
-})
-
-Tab3:Button({
-    Title = "Sell All Now (Sesuai Setting)",
-    Description = "Jual paksa sekarang",
-    Callback = function()
-        local before = getSellableFishCount()
-        sellAll()
-        task.wait(3)
-        local total = before - getSellableFishCount()
-        WindUI:Notify({
-            Title = "Manual Sell",
-            Content = total > 0 and "✅ Terjual " .. total .. " ikan!" or "❌ Gak ada yang dijual",
-            Duration = 4
-        })
+    Title = "Enable Auto Sell",
+    Value = _G.AutoSellState,
+    Callback = function(state)
+        _G.AutoSellState = state
+        
+        if state then
+            if not Events.sell then
+                WindUI:Notify({ Title = "Error", Content = "Remote Sell tidak ditemukan!", Duration = 5 })
+                _G.AutoSellState = false
+                return
+            end
+            
+            local msg = (_G.AutoSellMethod == "Delay") and ("Setiap " .. _G.AutoSellValue .. " detik") 
+                        or ("Saat jumlah >= " .. _G.AutoSellValue)
+            WindUI:Notify({ Title = "Auto Sell ON", Content = msg, Duration = 4 })
+            RunAutoSellLoop()
+        else
+            WindUI:Notify({ Title = "Auto Sell OFF", Duration = 3 })
+            if _G.AutoSellThread then 
+                task.cancel(_G.AutoSellThread) 
+                _G.AutoSellThread = nil 
+            end
+        end
     end
 })
 
 Tab3:Divider()
-
--- Auto start kalau config nyala dari awal
-if Config.AutoSell then
-    updateAutoSellTask()
-end
 
 if isMobile then
     Events.SpawnTotem = GetServerRemote("RE/SpawnTotem")
